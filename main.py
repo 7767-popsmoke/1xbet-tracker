@@ -4,6 +4,19 @@ import sqlite3
 
 app = FastAPI(title="1xBet Pattern Tracker")
 
+# Génération exhaustive des 26 catégories théoriques
+VARIANTS = [
+    "[1 < X < 2]", "[1 < 2 < X]", "[X < 1 < 2]", "[X < 2 < 1]",
+    "[2 < 1 < X]", "[2 < X < 1]", "[1 = X < 2]", "[2 < 1 = X]",
+    "[1 = 2 < X]", "[X < 1 = 2]", "[X = 2 < 1]", "[1 < X = 2]",
+    "[1 = X = 2]", "[1 < X > 2]", "[2 < X > 1]"
+]
+
+ALL_THEORETICAL_CATEGORIES = []
+for base in ["2/3/3", "3/3/2"]:
+    for v in VARIANTS:
+        ALL_THEORETICAL_CATEGORIES.append(f"{base} {v}")
+
 def get_db():
     conn = sqlite3.connect("1xbet_tracker.db")
     conn.row_factory = sqlite3.Row
@@ -13,16 +26,16 @@ def get_db():
 def read_dashboard(category: str = None, league: str = None):
     conn = get_db()
     cursor = conn.cursor()
-    
-    # 1. Récupération des catégories et de leurs totaux
-    cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches GROUP BY category ORDER BY total_matches DESC")
-    categories_stats = [dict(row) for row in cursor.fetchall()]
-    
-    # 2. Récupération des championnats et de leurs totaux
+
+    # Compteur de matchs réels en base par catégorie
+    cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches GROUP BY category")
+    db_cat_counts = {row["category"]: row["total_matches"] for row in cursor.fetchall()}
+
+    # Récupération des championnats et de leurs effectifs
     cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches GROUP BY league ORDER BY total_matches DESC")
     leagues_stats = [dict(row) for row in cursor.fetchall()]
-    
-    # 3. Construction de la requête principale avec filtres dynamiques
+
+    # Construction de la requête avec filtres
     query = """
         SELECT id, league, home_team, away_team, odds_type, category,
                COALESCE(ht_score, '0-0') as ht_score,
@@ -33,21 +46,21 @@ def read_dashboard(category: str = None, league: str = None):
         WHERE 1=1
     """
     params = []
-    
+
     if category and category != "all":
         query += " AND category = ?"
         params.append(category)
     else:
         category = "all"
-        
+
     if league and league != "all":
         query += " AND league = ?"
         params.append(league)
     else:
         league = "all"
-        
+
     query += " ORDER BY captured_at DESC LIMIT 50"
-    
+
     cursor.execute(query, params)
     matches = [dict(row) for row in cursor.fetchall()]
     conn.close()
@@ -65,20 +78,36 @@ def read_dashboard(category: str = None, league: str = None):
             .card {{ background-color: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }}
             h1 {{ font-size: 20px; color: #38bdf8; margin: 0 0 12px 0; }}
             h2 {{ font-size: 15px; color: #94a3b8; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-top: 0; }}
-            
-            /* Tabs Navigation */
+
+            /* En-tête d'onglets */
             .tabs-header {{ display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 2px solid #334155; padding-bottom: 8px; }}
             .tab-btn {{ background: none; border: none; color: #94a3b8; font-weight: bold; font-size: 14px; padding: 8px 12px; cursor: pointer; border-radius: 6px; }}
             .tab-btn.active {{ background-color: #0284c7; color: white; }}
-            
-            .filter-container {{ display: none; flex-wrap: wrap; gap: 8px; max-height: 160px; overflow-y: auto; padding: 4px; }}
-            .filter-container.active {{ display: flex; }}
-            
-            .pill-btn {{ background-color: #334155; color: #f8fafc; padding: 6px 12px; border-radius: 16px; text-decoration: none; font-size: 12px; font-weight: 500; transition: background 0.2s; display: inline-block; }}
+
+            .volet-container {{ display: none; }}
+            .volet-container.active {{ display: block; }}
+
+            /* Styles Menu Déroulant */
+            .select-dropdown {{
+                width: 100%;
+                background-color: #0f172a;
+                color: #38bdf8;
+                border: 1px solid #0284c7;
+                padding: 10px 14px;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+                margin-top: 6px;
+                outline: none;
+            }}
+
+            /* Conteneur pilules */
+            .pills-container {{ display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow-y: auto; padding: 4px; }}
+            .pill-btn {{ background-color: #334155; color: #f8fafc; padding: 6px 12px; border-radius: 16px; text-decoration: none; font-size: 12px; font-weight: 500; display: inline-block; }}
             .pill-btn:hover {{ background-color: #475569; }}
             .pill-btn.active {{ background-color: #0284c7; color: white; font-weight: bold; }}
-            
-            /* Table Styling */
+
+            /* Tableau responsive */
             .table-responsive {{ overflow-x: auto; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
             th, td {{ text-align: left; padding: 10px; border-bottom: 1px solid #334155; font-size: 12px; }}
@@ -96,29 +125,34 @@ def read_dashboard(category: str = None, league: str = None):
         </div>
 
         <div class="card">
-            <!-- Navigation Volets -->
+            <!-- Onglets d'alternance -->
             <div class="tabs-header">
-                <button class="tab-btn active" onclick="switchTab('categories')">🏷️ Catégories de cotes</button>
+                <button class="tab-btn active" onclick="switchTab('categories')">🏷️ Fenêtre des Catégories</button>
                 <button class="tab-btn" onclick="switchTab('leagues')">🏆 Championnats</button>
             </div>
 
-            <!-- Volet 1: Catégories -->
-            <div id="volet-categories" class="filter-container active">
-                <a href="/?category=all&league={league}" class="pill-btn {'active' if category == 'all' else ''}">Toutes ({sum(c['total_matches'] for c in categories_stats)})</a>
+            <!-- VOLET 1 : MENU DÉROULANT DES CATÉGORIES -->
+            <div id="volet-categories" class="volet-container active">
+                <label style="font-size: 12px; color: #94a3b8; font-weight: bold;">Sélectionner une catégorie parmi toutes les variantes théoriques :</label>
+                <select class="select-dropdown" onchange="filterByCategory(this.value)">
+                    <option value="all" {'selected' if category == 'all' else ''}>
+                        -- Toutes les catégories ({sum(db_cat_counts.values())} matchs détectés) --
+                    </option>
     """
-    
-    for c in categories_stats:
-        cat_name = c['category']
-        count = c['total_matches']
-        is_act = 'active' if category == cat_name else ''
-        html_content += f'<a href="/?category={cat_name}&league={league}" class="pill-btn {is_act}">{cat_name} ({count})</a>'
+
+    for cat in ALL_THEORETICAL_CATEGORIES:
+        match_count = db_cat_counts.get(cat, 0)
+        selected = 'selected' if category == cat else ''
+        html_content += f'<option value="{cat}" {selected}>{cat} — ({match_count} matchs)</option>'
 
     html_content += f"""
+                </select>
             </div>
 
-            <!-- Volet 2: Championnats -->
-            <div id="volet-leagues" class="filter-container">
-                <a href="/?category={category}&league=all" class="pill-btn {'active' if league == 'all' else ''}">Tous ({sum(l['total_matches'] for l in leagues_stats)})</a>
+            <!-- VOLET 2 : FILTRE PAR CHAMPIONNATS -->
+            <div id="volet-leagues" class="volet-container">
+                <div class="pills-container">
+                    <a href="/?category={category}&league=all" class="pill-btn {'active' if league == 'all' else ''}">Tous ({sum(l['total_matches'] for l in leagues_stats)})</a>
     """
 
     for l in leagues_stats:
@@ -128,10 +162,11 @@ def read_dashboard(category: str = None, league: str = None):
         html_content += f'<a href="/?category={category}&league={lg_name}" class="pill-btn {is_act}">{lg_name} ({count})</a>'
 
     html_content += f"""
+                </div>
             </div>
         </div>
 
-        <!-- Tableau de Résultats -->
+        <!-- TABLEAU DE RÉSULTATS -->
         <div class="card">
             <h2>Matchs Filtrés — <span style="color:#38bdf8;">Catégorie: {"Toutes" if category == "all" else category} | Ligue: {"Toutes" if league == "all" else league}</span></h2>
             <div class="table-responsive">
@@ -150,7 +185,7 @@ def read_dashboard(category: str = None, league: str = None):
     """
 
     if not matches:
-        html_content += '<tr><td colspan="6" style="text-align:center; color:#64748b; padding: 20px;">Aucun match trouvé pour ce filtre.</td></tr>'
+        html_content += '<tr><td colspan="6" style="text-align:center; color:#64748b; padding: 20px;">Aucun match trouvé pour cette sélection.</td></tr>'
     else:
         for m in matches:
             datetime_str = m.get('capture_datetime') or '--/-- --:--'
@@ -168,25 +203,31 @@ def read_dashboard(category: str = None, league: str = None):
             </tr>
             """
 
-    html_content += """
+    html_content += f"""
                     </tbody>
                 </table>
             </div>
         </div>
 
         <script>
-            function switchTab(tabName) {
+            function switchTab(tabName) {{
                 document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
-                document.querySelectorAll('.filter-container').forEach(cont => cont.classList.remove('active'));
+                document.querySelectorAll('.volet-container').forEach(cont => cont.classList.remove('active'));
 
-                if (tabName === 'categories') {
+                if (tabName === 'categories') {{
                     document.querySelectorAll('.tab-btn')[0].classList.add('active');
                     document.getElementById('volet-categories').classList.add('active');
-                } else {
+                }} else {{
                     document.querySelectorAll('.tab-btn')[1].classList.add('active');
                     document.getElementById('volet-leagues').classList.add('active');
-                }
-            }
+                }}
+            }}
+
+            function filterByCategory(selectedCategory) {{
+                const urlParams = new URLSearchParams(window.location.search);
+                const currentLeague = urlParams.get('league') || 'all';
+                window.location.href = `/?category=${{encodeURIComponent(selectedCategory)}}&league=${{encodeURIComponent(currentLeague)}}`;
+            }}
         </script>
     </body>
     </html>
