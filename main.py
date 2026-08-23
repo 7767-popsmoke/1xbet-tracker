@@ -30,6 +30,7 @@ def read_dashboard():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <meta http-refresh="30"> <!-- Rafraîchit la page toutes les 30 secondes -->
         <title>1xBet Pattern Tracker</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 16px; }}
