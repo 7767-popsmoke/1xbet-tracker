@@ -4,6 +4,7 @@ import sqlite3
 
 app = FastAPI(title="1xBet Pattern Tracker")
 
+# Génération exhaustive des 26 catégories théoriques
 VARIANTS = [
     "[1 < X < 2]", "[1 < 2 < X]", "[X < 1 < 2]", "[X < 2 < 1]",
     "[2 < 1 < X]", "[2 < X < 1]", "[1 = X < 2]", "[2 < 1 = X]",
@@ -21,53 +22,65 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-@app.get("/", response_class=HTMLResponse)
-def read_dashboard(category: str = None, league: str = None, status_filter: str = "all"):
-    conn = get_db()
+def check_and_update_schema(conn):
+    """ Ajoute automatiquement les nouvelles colonnes si elles manquent """
     cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(matches)")
+    columns = [column[1] for column in cursor.fetchall()]
+    
+    if "is_eligible" not in columns:
+        cursor.execute("ALTER TABLE matches ADD COLUMN is_eligible INTEGER DEFAULT 1")
+    if "status" not in columns:
+        cursor.execute("ALTER TABLE matches ADD COLUMN status TEXT DEFAULT 'confirmed'")
+    conn.commit()
 
-    # Compteurs
-    cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY category")
-    db_cat_counts = {row["category"]: row["total_matches"] for row in cursor.fetchall()}
+@app.get("/", response_class=HTMLResponse)
+def read_dashboard(category: str = None, league: str = None):
+    try:
+        conn = get_db()
+        check_and_update_schema(conn)
+        cursor = conn.cursor()
 
-    cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY league ORDER BY league ASC")
-    leagues_stats = [dict(row) for row in cursor.fetchall()]
+        # Compteurs
+        cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY category")
+        db_cat_counts = {row["category"]: row["total_matches"] for row in cursor.fetchall()}
 
-    # Requête de sélection : Seuls les matchs ÉLIGIBLES (is_eligible = 1) sont retenus
-    query = """
-        SELECT id, league, home_team, away_team, odds_type, category,
-               COALESCE(ht_score, '0-0') as ht_score,
-               COALESCE(yellow_cards, '0-0') as yellow_cards,
-               COALESCE(red_cards, '0-0') as red_cards,
-               COALESCE(status, 'confirmed') as match_status,
-               strftime('%d/%m %H:%M:%S', captured_at) as capture_datetime
-        FROM matches
-        WHERE is_eligible = 1
-    """
-    params = []
+        cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY league ORDER BY league ASC")
+        leagues_stats = [dict(row) for row in cursor.fetchall()]
 
-    if category and category != "all":
-        query += " AND category = ?"
-        params.append(category)
-    else:
-        category = "all"
+        # Construction de la requête SQL
+        query = """
+            SELECT id, league, home_team, away_team, odds_type, category,
+                   COALESCE(ht_score, '0-0') as ht_score,
+                   COALESCE(yellow_cards, '0-0') as yellow_cards,
+                   COALESCE(red_cards, '0-0') as red_cards,
+                   COALESCE(status, 'confirmed') as match_status,
+                   strftime('%d/%m %H:%M:%S', captured_at) as capture_datetime
+            FROM matches
+            WHERE is_eligible = 1
+        """
+        params = []
 
-    if league and league != "all":
-        query += " AND league = ?"
-        params.append(league)
-    else:
-        league = "all"
+        if category and category != "all":
+            query += " AND category = ?"
+            params.append(category)
+        else:
+            category = "all"
 
-    if status_filter == "pending":
-        query += " AND status = 'pending'"
-    elif status_filter == "confirmed":
-        query += " AND status = 'confirmed'"
+        if league and league != "all":
+            query += " AND league = ?"
+            params.append(league)
+        else:
+            league = "all"
 
-    query += " ORDER BY captured_at DESC LIMIT 50"
+        query += " ORDER BY captured_at DESC LIMIT 50"
 
-    cursor.execute(query, params)
-    matches = [dict(row) for row in cursor.fetchall()]
-    conn.close()
+        cursor.execute(query, params)
+        matches = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+
+    except Exception as e:
+        return HTMLResponse(content=f"<h2>Une erreur SQLite est survenue : {str(e)}</h2><p>Vérifiez que la table 'matches' existe bien dans 1xbet_tracker.db.</p>", status_code=500)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -75,7 +88,7 @@ def read_dashboard(category: str = None, league: str = None, status_filter: str 
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <meta http-equiv="refresh" content="10"> <!-- Rafraîchissement automatique toutes les 10 secondes -->
+        <meta http-equiv="refresh" content="15">
         <title>1xBet Live Tracker</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 16px; }}
@@ -112,7 +125,6 @@ def read_dashboard(category: str = None, league: str = None, status_filter: str 
             .badge {{ background-color: #0284c7; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
             .stats-tag {{ background-color: #334155; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; }}
             
-            /* Status Badges */
             .status-pending {{ background-color: #eab308; color: #0f172a; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }}
             .status-confirmed {{ background-color: #22c55e; color: #ffffff; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 11px; display: inline-block; }}
 
@@ -189,7 +201,7 @@ def read_dashboard(category: str = None, league: str = None, status_filter: str 
     """
 
     if not matches:
-        html_content += '<tr><td colspan="7" style="text-align:center; color:#64748b; padding: 20px;">Aucun match en cours de suivi ou validé pour ces critères.</td></tr>'
+        html_content += '<tr><td colspan="7" style="text-align:center; color:#64748b; padding: 20px;">Aucun match trouvé.</td></tr>'
     else:
         for m in matches:
             datetime_str = m.get('capture_datetime') or '--/-- --:--'
