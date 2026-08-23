@@ -22,9 +22,30 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-def check_and_update_schema(conn):
-    """ Ajoute automatiquement les nouvelles colonnes si elles manquent """
+def init_db_and_schema():
+    """ Initialise la table 'matches' et ses colonnes si elle n'existe pas """
+    conn = get_db()
     cursor = conn.cursor()
+    
+    # Création de la table si absente
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS matches (
+            id TEXT PRIMARY KEY,
+            league TEXT,
+            home_team TEXT,
+            away_team TEXT,
+            odds_type TEXT,
+            category TEXT,
+            ht_score TEXT,
+            yellow_cards TEXT,
+            red_cards TEXT,
+            status TEXT DEFAULT 'confirmed',
+            is_eligible INTEGER DEFAULT 1,
+            captured_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    # Vérification et ajout automatique des nouvelles colonnes si anciennes versions
     cursor.execute("PRAGMA table_info(matches)")
     columns = [column[1] for column in cursor.fetchall()]
     
@@ -32,19 +53,24 @@ def check_and_update_schema(conn):
         cursor.execute("ALTER TABLE matches ADD COLUMN is_eligible INTEGER DEFAULT 1")
     if "status" not in columns:
         cursor.execute("ALTER TABLE matches ADD COLUMN status TEXT DEFAULT 'confirmed'")
+        
     conn.commit()
+    conn.close()
+
+# Initialisation au démarrage de l'application
+init_db_and_schema()
 
 @app.get("/", response_class=HTMLResponse)
 def read_dashboard(category: str = None, league: str = None):
     try:
         conn = get_db()
-        check_and_update_schema(conn)
         cursor = conn.cursor()
 
-        # Compteurs
+        # Compteurs par catégorie
         cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY category")
         db_cat_counts = {row["category"]: row["total_matches"] for row in cursor.fetchall()}
 
+        # Compteurs par championnat
         cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches WHERE is_eligible = 1 GROUP BY league ORDER BY league ASC")
         leagues_stats = [dict(row) for row in cursor.fetchall()]
 
@@ -80,7 +106,7 @@ def read_dashboard(category: str = None, league: str = None):
         conn.close()
 
     except Exception as e:
-        return HTMLResponse(content=f"<h2>Une erreur SQLite est survenue : {str(e)}</h2><p>Vérifiez que la table 'matches' existe bien dans 1xbet_tracker.db.</p>", status_code=500)
+        return HTMLResponse(content=f"<h2>Erreur lors du chargement : {str(e)}</h2>", status_code=500)
 
     html_content = f"""
     <!DOCTYPE html>
@@ -201,7 +227,7 @@ def read_dashboard(category: str = None, league: str = None):
     """
 
     if not matches:
-        html_content += '<tr><td colspan="7" style="text-align:center; color:#64748b; padding: 20px;">Aucun match trouvé.</td></tr>'
+        html_content += '<tr><td colspan="7" style="text-align:center; color:#64748b; padding: 20px;">Aucun match en base de données pour le moment. En attente de la première détection...</td></tr>'
     else:
         for m in matches:
             datetime_str = m.get('capture_datetime') or '--/-- --:--'
