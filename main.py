@@ -10,13 +10,19 @@ def get_db():
     return conn
 
 @app.get("/", response_class=HTMLResponse)
-def read_dashboard(category: str = None):
+def read_dashboard(category: str = None, league: str = None):
     conn = get_db()
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM category_stats")
-    stats = [dict(row) for row in cursor.fetchall()]
+    # 1. Récupération des catégories et de leurs totaux
+    cursor.execute("SELECT category, COUNT(*) as total_matches FROM matches GROUP BY category ORDER BY total_matches DESC")
+    categories_stats = [dict(row) for row in cursor.fetchall()]
     
+    # 2. Récupération des championnats et de leurs totaux
+    cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches GROUP BY league ORDER BY total_matches DESC")
+    leagues_stats = [dict(row) for row in cursor.fetchall()]
+    
+    # 3. Construction de la requête principale avec filtres dynamiques
     query = """
         SELECT id, league, home_team, away_team, odds_type, category,
                COALESCE(ht_score, '0-0') as ht_score,
@@ -24,15 +30,25 @@ def read_dashboard(category: str = None):
                COALESCE(red_cards, '0-0') as red_cards,
                strftime('%d/%m %H:%M:%S', captured_at) as capture_datetime
         FROM matches
+        WHERE 1=1
     """
+    params = []
+    
     if category and category != "all":
-        query += " WHERE category = ? ORDER BY captured_at DESC LIMIT 20"
-        cursor.execute(query, (category,))
+        query += " AND category = ?"
+        params.append(category)
     else:
-        query += " ORDER BY captured_at DESC LIMIT 20"
-        cursor.execute(query)
         category = "all"
         
+    if league and league != "all":
+        query += " AND league = ?"
+        params.append(league)
+    else:
+        league = "all"
+        
+    query += " ORDER BY captured_at DESC LIMIT 50"
+    
+    cursor.execute(query, params)
     matches = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
@@ -43,88 +59,135 @@ def read_dashboard(category: str = None):
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <meta http-equiv="refresh" content="30">
-        <title>1xBet Pattern Tracker</title>
+        <title>1xBet Tracker - Analytics</title>
         <style>
             body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: #0f172a; color: #f8fafc; margin: 0; padding: 16px; }}
             .card {{ background-color: #1e293b; border-radius: 12px; padding: 16px; margin-bottom: 16px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }}
-            h1 {{ font-size: 20px; color: #38bdf8; margin-top: 0; }}
-            h2 {{ font-size: 16px; color: #94a3b8; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-top: 0; }}
+            h1 {{ font-size: 20px; color: #38bdf8; margin: 0 0 12px 0; }}
+            h2 {{ font-size: 15px; color: #94a3b8; border-bottom: 1px solid #334155; padding-bottom: 8px; margin-top: 0; }}
             
-            .categories-container {{ display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px; margin-bottom: 12px; }}
-            .cat-btn {{ background-color: #334155; color: #f8fafc; padding: 8px 14px; border-radius: 20px; text-decoration: none; font-size: 13px; font-weight: bold; white-space: nowrap; }}
-            .cat-btn.active {{ background-color: #0284c7; color: white; }}
+            /* Tabs Navigation */
+            .tabs-header {{ display: flex; gap: 8px; margin-bottom: 12px; border-bottom: 2px solid #334155; padding-bottom: 8px; }}
+            .tab-btn {{ background: none; border: none; color: #94a3b8; font-weight: bold; font-size: 14px; padding: 8px 12px; cursor: pointer; border-radius: 6px; }}
+            .tab-btn.active {{ background-color: #0284c7; color: white; }}
             
+            .filter-container {{ display: none; flex-wrap: wrap; gap: 8px; max-height: 160px; overflow-y: auto; padding: 4px; }}
+            .filter-container.active {{ display: flex; }}
+            
+            .pill-btn {{ background-color: #334155; color: #f8fafc; padding: 6px 12px; border-radius: 16px; text-decoration: none; font-size: 12px; font-weight: 500; transition: background 0.2s; display: inline-block; }}
+            .pill-btn:hover {{ background-color: #475569; }}
+            .pill-btn.active {{ background-color: #0284c7; color: white; font-weight: bold; }}
+            
+            /* Table Styling */
+            .table-responsive {{ overflow-x: auto; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
             th, td {{ text-align: left; padding: 10px; border-bottom: 1px solid #334155; font-size: 12px; }}
-            th {{ color: #94a3b8; font-weight: 600; }}
+            th {{ color: #94a3b8; font-weight: 600; white-space: nowrap; }}
             .datetime-tag {{ color: #38bdf8; font-weight: bold; font-size: 11px; background-color: #0f172a; padding: 4px 6px; border-radius: 4px; border: 1px solid #0284c7; white-space: nowrap; }}
             .badge {{ background-color: #0284c7; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
-            .stats-tag {{ background-color: #334155; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
-            .btn {{ display: block; width: 100%; text-align: center; background-color: #0284c7; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: bold; text-decoration: none; margin-top: 12px; }}
+            .stats-tag {{ background-color: #334155; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; }}
+            .reset-btn {{ display: inline-block; background-color: #0284c7; color: white; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: bold; text-decoration: none; margin-bottom: 12px; }}
         </style>
     </head>
     <body>
         <div class="card">
-            <h1>1xBet Pattern Tracker</h1>
-            <a href="/" class="btn">🔄 Actualiser / Réinitialiser</a>
+            <h1>📊 1xBet Analytics Dashboard</h1>
+            <a href="/" class="reset-btn">🔄 Réinitialiser tous les filtres</a>
         </div>
 
         <div class="card">
-            <h2>Filtre par Catégorie</h2>
-            <div class="categories-container">
-                <a href="/?category=all" class="cat-btn {'active' if category == 'all' else ''}">Toutes les catégories</a>
+            <!-- Navigation Volets -->
+            <div class="tabs-header">
+                <button class="tab-btn active" onclick="switchTab('categories')">🏷️ Catégories de cotes</button>
+                <button class="tab-btn" onclick="switchTab('leagues')">🏆 Championnats</button>
+            </div>
+
+            <!-- Volet 1: Catégories -->
+            <div id="volet-categories" class="filter-container active">
+                <a href="/?category=all&league={league}" class="pill-btn {'active' if category == 'all' else ''}">Toutes ({sum(c['total_matches'] for c in categories_stats)})</a>
     """
     
-    for s in stats:
-        cat_name = s.get('category', 'N/A')
-        count = s.get('total_matches', 0)
-        is_active = 'active' if category == cat_name else ''
-        html_content += f'<a href="/?category={cat_name}" class="cat-btn {is_active}">{cat_name} ({count})</a>'
+    for c in categories_stats:
+        cat_name = c['category']
+        count = c['total_matches']
+        is_act = 'active' if category == cat_name else ''
+        html_content += f'<a href="/?category={cat_name}&league={league}" class="pill-btn {is_act}">{cat_name} ({count})</a>'
+
+    html_content += f"""
+            </div>
+
+            <!-- Volet 2: Championnats -->
+            <div id="volet-leagues" class="filter-container">
+                <a href="/?category={category}&league=all" class="pill-btn {'active' if league == 'all' else ''}">Tous ({sum(l['total_matches'] for l in leagues_stats)})</a>
+    """
+
+    for l in leagues_stats:
+        lg_name = l['league']
+        count = l['total_matches']
+        is_act = 'active' if league == lg_name else ''
+        html_content += f'<a href="/?category={category}&league={lg_name}" class="pill-btn {is_act}">{lg_name} ({count})</a>'
 
     html_content += f"""
             </div>
         </div>
 
+        <!-- Tableau de Résultats -->
         <div class="card">
-            <h2>Matchs Capturés — <span style="color:#38bdf8;">{"Toutes" if category == "all" else category}</span></h2>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Horodatage</th>
-                        <th>Match</th>
-                        <th>MT</th>
-                        <th>Cartons</th>
-                        <th>Cotes</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <h2>Matchs Filtrés — <span style="color:#38bdf8;">Catégorie: {"Toutes" if category == "all" else category} | Ligue: {"Toutes" if league == "all" else league}</span></h2>
+            <div class="table-responsive">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Horodatage</th>
+                            <th>Championnat</th>
+                            <th>Match</th>
+                            <th>Score MT</th>
+                            <th>Cartons</th>
+                            <th>Catégorie</th>
+                        </tr>
+                    </thead>
+                    <tbody>
     """
 
     if not matches:
-        html_content += '<tr><td colspan="5" style="text-align:center; color:#64748b;">Aucun match capturé.</td></tr>'
+        html_content += '<tr><td colspan="6" style="text-align:center; color:#64748b; padding: 20px;">Aucun match trouvé pour ce filtre.</td></tr>'
     else:
         for m in matches:
             datetime_str = m.get('capture_datetime') or '--/-- --:--'
             html_content += f"""
             <tr>
                 <td><span class="datetime-tag">📅 {datetime_str}</span></td>
-                <td>
-                    <b>{m.get('home_team')} vs {m.get('away_team')}</b><br>
-                    <small style='color:#64748b'>{m.get('league')}</small>
-                </td>
+                <td><small style='color:#94a3b8'>{m.get('league')}</small></td>
+                <td><b>{m.get('home_team')} vs {m.get('away_team')}</b></td>
                 <td><span class="stats-tag">⚽ {m.get('ht_score')}</span></td>
                 <td>
                     <span class="stats-tag">🟨 {m.get('yellow_cards')}</span>
                     <span class="stats-tag" style="color: #ef4444;">🟥 {m.get('red_cards')}</span>
                 </td>
-                <td><span class='badge'>{m.get('odds_type')}</span></td>
+                <td><span class='badge'>{m.get('category')}</span></td>
             </tr>
             """
 
     html_content += """
-                </tbody>
-            </table>
+                    </tbody>
+                </table>
+            </div>
         </div>
+
+        <script>
+            function switchTab(tabName) {
+                document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+                document.querySelectorAll('.filter-container').forEach(cont => cont.classList.remove('active'));
+
+                if (tabName === 'categories') {
+                    document.querySelectorAll('.tab-btn')[0].classList.add('active');
+                    document.getElementById('volet-categories').classList.add('active');
+                } else {
+                    document.querySelectorAll('.tab-btn')[1].classList.add('active');
+                    document.getElementById('volet-leagues').classList.add('active');
+                }
+            }
+        </script>
     </body>
     </html>
     """
