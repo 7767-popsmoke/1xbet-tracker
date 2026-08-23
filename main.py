@@ -14,13 +14,14 @@ def read_dashboard(category: str = None):
     conn = get_db()
     cursor = conn.cursor()
     
-    # 1. Récupération des catégories et compteurs
     cursor.execute("SELECT * FROM category_stats")
     stats = [dict(row) for row in cursor.fetchall()]
     
-    # 2. Récupération avec formatage de la date (JJ/MM) et de l'heure (HH:MM:SS)
     query = """
         SELECT id, league, home_team, away_team, odds_type, category,
+               COALESCE(ht_score, '0-0') as ht_score,
+               COALESCE(yellow_cards, '0-0') as yellow_cards,
+               COALESCE(red_cards, '0-0') as red_cards,
                strftime('%d/%m %H:%M:%S', captured_at) as capture_datetime
         FROM matches
     """
@@ -35,7 +36,6 @@ def read_dashboard(category: str = None):
     matches = [dict(row) for row in cursor.fetchall()]
     conn.close()
 
-    # 3. Construction de l'interface HTML
     html_content = f"""
     <!DOCTYPE html>
     <html lang="fr">
@@ -55,10 +55,11 @@ def read_dashboard(category: str = None):
             .cat-btn.active {{ background-color: #0284c7; color: white; }}
             
             table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
-            th, td {{ text-align: left; padding: 10px; border-bottom: 1px solid #334155; font-size: 13px; }}
+            th, td {{ text-align: left; padding: 10px; border-bottom: 1px solid #334155; font-size: 12px; }}
             th {{ color: #94a3b8; font-weight: 600; }}
             .datetime-tag {{ color: #38bdf8; font-weight: bold; font-size: 11px; background-color: #0f172a; padding: 4px 6px; border-radius: 4px; border: 1px solid #0284c7; white-space: nowrap; }}
             .badge {{ background-color: #0284c7; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
+            .stats-tag {{ background-color: #334155; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
             .btn {{ display: block; width: 100%; text-align: center; background-color: #0284c7; color: white; border: none; padding: 12px; border-radius: 8px; font-size: 14px; font-weight: bold; text-decoration: none; margin-top: 12px; }}
         </style>
     </head>
@@ -91,14 +92,16 @@ def read_dashboard(category: str = None):
                     <tr>
                         <th>Horodatage</th>
                         <th>Match</th>
-                        <th>Détails</th>
+                        <th>MT</th>
+                        <th>Cartons</th>
+                        <th>Cotes</th>
                     </tr>
                 </thead>
                 <tbody>
     """
 
     if not matches:
-        html_content += '<tr><td colspan="3" style="text-align:center; color:#64748b;">Aucun match capturé.</td></tr>'
+        html_content += '<tr><td colspan="5" style="text-align:center; color:#64748b;">Aucun match capturé.</td></tr>'
     else:
         for m in matches:
             datetime_str = m.get('capture_datetime') or '--/-- --:--'
@@ -108,6 +111,11 @@ def read_dashboard(category: str = None):
                 <td>
                     <b>{m.get('home_team')} vs {m.get('away_team')}</b><br>
                     <small style='color:#64748b'>{m.get('league')}</small>
+                </td>
+                <td><span class="stats-tag">⚽ {m.get('ht_score')}</span></td>
+                <td>
+                    <span class="stats-tag">🟨 {m.get('yellow_cards')}</span>
+                    <span class="stats-tag" style="color: #ef4444;">🟥 {m.get('red_cards')}</span>
                 </td>
                 <td><span class='badge'>{m.get('odds_type')}</span></td>
             </tr>
