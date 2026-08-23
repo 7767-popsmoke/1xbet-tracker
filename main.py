@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 import sqlite3
+import urllib.parse
 
 app = FastAPI(title="1xBet Pattern Tracker")
 
@@ -32,7 +33,7 @@ def read_dashboard(category: str = None, league: str = None):
     db_cat_counts = {row["category"]: row["total_matches"] for row in cursor.fetchall()}
 
     # Récupération des championnats et de leurs effectifs
-    cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches GROUP BY league ORDER BY total_matches DESC")
+    cursor.execute("SELECT league, COUNT(*) as total_matches FROM matches GROUP BY league ORDER BY league ASC")
     leagues_stats = [dict(row) for row in cursor.fetchall()]
 
     # Construction de la requête avec filtres
@@ -101,12 +102,6 @@ def read_dashboard(category: str = None, league: str = None):
                 outline: none;
             }}
 
-            /* Conteneur pilules */
-            .pills-container {{ display: flex; flex-wrap: wrap; gap: 8px; max-height: 180px; overflow-y: auto; padding: 4px; }}
-            .pill-btn {{ background-color: #334155; color: #f8fafc; padding: 6px 12px; border-radius: 16px; text-decoration: none; font-size: 12px; font-weight: 500; display: inline-block; }}
-            .pill-btn:hover {{ background-color: #475569; }}
-            .pill-btn.active {{ background-color: #0284c7; color: white; font-weight: bold; }}
-
             /* Tableau responsive */
             .table-responsive {{ overflow-x: auto; }}
             table {{ width: 100%; border-collapse: collapse; margin-top: 8px; }}
@@ -128,12 +123,12 @@ def read_dashboard(category: str = None, league: str = None):
             <!-- Onglets d'alternance -->
             <div class="tabs-header">
                 <button class="tab-btn active" onclick="switchTab('categories')">🏷️ Fenêtre des Catégories</button>
-                <button class="tab-btn" onclick="switchTab('leagues')">🏆 Championnats</button>
+                <button class="tab-btn" onclick="switchTab('leagues')">🏆 Fenêtre des Championnats</button>
             </div>
 
             <!-- VOLET 1 : MENU DÉROULANT DES CATÉGORIES -->
             <div id="volet-categories" class="volet-container active">
-                <label style="font-size: 12px; color: #94a3b8; font-weight: bold;">Sélectionner une catégorie parmi toutes les variantes théoriques :</label>
+                <label style="font-size: 12px; color: #94a3b8; font-weight: bold;">Sélectionner une catégorie parmi les variantes théoriques :</label>
                 <select class="select-dropdown" onchange="filterByCategory(this.value)">
                     <option value="all" {'selected' if category == 'all' else ''}>
                         -- Toutes les catégories ({sum(db_cat_counts.values())} matchs détectés) --
@@ -149,20 +144,23 @@ def read_dashboard(category: str = None, league: str = None):
                 </select>
             </div>
 
-            <!-- VOLET 2 : FILTRE PAR CHAMPIONNATS -->
+            <!-- VOLET 2 : MENU DÉROULANT DES CHAMPIONNATS -->
             <div id="volet-leagues" class="volet-container">
-                <div class="pills-container">
-                    <a href="/?category={category}&league=all" class="pill-btn {'active' if league == 'all' else ''}">Tous ({sum(l['total_matches'] for l in leagues_stats)})</a>
+                <label style="font-size: 12px; color: #94a3b8; font-weight: bold;">Sélectionner un championnat capturé :</label>
+                <select class="select-dropdown" onchange="filterByLeague(this.value)">
+                    <option value="all" {'selected' if league == 'all' else ''}>
+                        -- Tous les championnats ({sum(l['total_matches'] for l in leagues_stats)} matchs) --
+                    </option>
     """
 
     for l in leagues_stats:
         lg_name = l['league']
         count = l['total_matches']
-        is_act = 'active' if league == lg_name else ''
-        html_content += f'<a href="/?category={category}&league={lg_name}" class="pill-btn {is_act}">{lg_name} ({count})</a>'
+        selected = 'selected' if league == lg_name else ''
+        html_content += f'<option value="{lg_name}" {selected}>{lg_name} — ({count} matchs)</option>'
 
     html_content += f"""
-                </div>
+                </select>
             </div>
         </div>
 
@@ -227,6 +225,12 @@ def read_dashboard(category: str = None, league: str = None):
                 const urlParams = new URLSearchParams(window.location.search);
                 const currentLeague = urlParams.get('league') || 'all';
                 window.location.href = `/?category=${{encodeURIComponent(selectedCategory)}}&league=${{encodeURIComponent(currentLeague)}}`;
+            }}
+
+            function filterByLeague(selectedLeague) {{
+                const urlParams = new URLSearchParams(window.location.search);
+                const currentCategory = urlParams.get('category') || 'all';
+                window.location.href = `/?category=${{encodeURIComponent(currentCategory)}}&league=${{encodeURIComponent(selectedLeague)}}`;
             }}
         </script>
     </body>
